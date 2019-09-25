@@ -2,6 +2,7 @@
 
 consul_user: "consul"
 consul_group: "bin"
+consul_bin_path: "/usr/local/bin"
 consul_config_path: "/etc/consul"
 consul_configd_path: "{{ consul_config_path }}/consul.d"
 consul_policies: "/home/{{ consul_user }}/policies"

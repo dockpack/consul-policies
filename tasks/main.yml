@@ -59,7 +59,7 @@
   when: consul_node_role is not defined or consul_node_role != 'server'
   environment:
     CONSUL_HTTP_TOKEN: "{{ consul_acl_master_token }}"
-  shell: "consul acl policy list | grep -v '^  '"
+  shell: "{{ consul_bin_path }}/consul acl policy list | grep -v '^  '"
   changed_when: false
   register: list_policies
   tags:
@@ -74,7 +74,7 @@
       - consul_node_role is not defined or consul_node_role != 'server' 
       - inventory_hostname_short not in list_policies.stdout
     command: >
-        consul acl policy create \
+        {{ consul_bin_path }}/consul acl policy create \
         -description='Agent has host-related privileges.'
         -name {{ inventory_hostname_short }} \
         -rules @node-{{ inventory_hostname_short }}-policy.hcl
@@ -90,7 +90,7 @@
       - consul_node_role is not defined or consul_node_role != 'server' 
       - inventory_hostname_short in list_policies.stdout
     command: >
-      consul acl policy update \
+      {{ consul_bin_path }}/consul acl policy update \
         -description='Agent has host-related privileges.'
         -name {{ inventory_hostname_short }} \
         -rules @node-{{ inventory_hostname_short }}-policy.hcl
@@ -117,7 +117,7 @@
   when: consul_node_role is not defined or consul_node_role != 'server'
   environment:
     CONSUL_HTTP_TOKEN: "{{ consul_acl_master_token }}"
-  shell: "consul acl token list | grep 'Agent token '| sed 's/.*Agent token //'"
+  shell: "{{ consul_bin_path }}/consul acl token list | grep 'Agent token '| sed 's/.*Agent token //'"
   changed_when: false
   register: list_tokens
   tags:
@@ -187,7 +187,7 @@
   run_once: true
   environment:
     CONSUL_HTTP_TOKEN: "{{ consul_acl_master_token }}"
-  shell: "consul acl token list | grep -c 'Deployment service registration token'"
+  shell: "{{ consul_bin_path }}/consul acl token list | grep -c 'Deployment service registration token'"
   changed_when: false
   register: deployer_token
   failed_when: deployer_token.stdout == ''
@@ -217,7 +217,7 @@
   environment:
     CONSUL_HTTP_TOKEN: "{{ consul_acl_master_token }}"
   command: >
-    consul acl policy create \
+    {{ consul_bin_path }}/consul acl policy create \
       -description='Deployer has service register.'
       -name 'deployer-policy'
       -rules @deployer-policy.hcl

@@ -1,0 +1,14 @@
+{
+  "service": {
+    "name": "{{ my_service_name }}",
+    "port": {{ service_port }},
+    "token": "{{ my_service_token }}"
+    "check": {
+      "id": "{{ my_service_name }}-check",
+      "http": "http://localhost:{{ service_port }}/health",
+      "method": "GET",
+      "interval": "1s",
+      "timeout": "1s"
+    }
+  }
+}

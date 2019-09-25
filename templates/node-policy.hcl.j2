@@ -1,0 +1,25 @@
+# {{ inventory_hostname_short }}-policy.hcl
+node "{{ inventory_hostname_short }}" {
+  policy = "write"
+}
+node_prefix "" {
+  policy = "read"
+}
+service "" {
+  policy = "write"
+}
+service_prefix "secure-" {
+  policy = "read"
+}
+event "" {
+  policy = "write"
+}
+query "" {
+  policy = "read"
+}
+key "" {
+  policy = "read"
+}
+key_prefix "{{ consul_kv_path|default('dx_config/') }}" {
+  policy = "read"
+}

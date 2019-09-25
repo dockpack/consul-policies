@@ -1,0 +1,19 @@
+galaxy_info:
+  author: Bas Meijer
+  description: Policies for ansible-consul
+  company: dockpack
+
+  license: MIT
+
+  min_ansible_version: 2.8
+
+  platforms:
+    - name: EL
+      versions:
+        - 7
+
+  galaxy_tags:
+    - system
+    - development
+
+dependencies: []

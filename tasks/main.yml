@@ -1,0 +1,259 @@
+---
+
+- block:
+    - name: Read ACL master token from previously boostrapped server
+      delegate_to: "{{ groups.consul_servers[0] }}"
+      shell: "cat {{ consul_config_path }}/config.json"
+      register: config_read
+      no_log: true
+      run_once: true
+      changed_when: false
+    
+    - name: Save acl_master_token from existing configuration
+      delegate_to: "{{ groups.consul_servers[0] }}"
+      run_once: true
+      set_fact:
+        consul_acl_master_token: "{{ config_read.stdout | from_json | json_query(query) }}"
+      vars:
+        query: "acl.tokens.master"
+      no_log: true
+  tags:
+    - policies
+    - tokens
+    - deployer
+
+- name: Determine fully qualified name for https
+  delegate_to: "{{ groups.consul_servers[0] }}"
+  run_once: true
+  set_fact:
+    consul_server: "{{ ansible_fqdn }}"
+  tags:
+    - tokens
+
+- name: Ensure directory exists
+  delegate_to: "{{ groups.consul_servers[0] }}"
+  run_once: true
+  file:
+    state: directory
+    path: "{{ consul_policies }}"
+    owner: "{{ consul_user }}"
+    group: "{{ consul_group }}"
+    mode: 0700
+  tags:
+    - policies
+
+- name: Create policy files for nodes
+  delegate_to: "{{ groups.consul_servers[0] }}"
+  when: consul_node_role is not defined or consul_node_role != 'server'
+  template:
+    src: node-policy.hcl.j2
+    dest: "{{ consul_policies }}/node-{{ inventory_hostname_short }}-policy.hcl"
+    owner: "{{ consul_user }}"
+    group: "{{ consul_group }}"
+    mode: 0640
+  tags:
+    - policies
+ 
+- name: Query policies
+  delegate_to: "{{ groups.consul_servers[0] }}"
+  when: consul_node_role is not defined or consul_node_role != 'server'
+  environment:
+    CONSUL_HTTP_TOKEN: "{{ consul_acl_master_token }}"
+  shell: "consul acl policy list | grep -v '^  '"
+  changed_when: false
+  register: list_policies
+  tags:
+    - policies
+
+- block: 
+  - name: Initialize policies for nodes
+    delegate_to: "{{ groups.consul_servers[0] }}"
+    environment:
+      CONSUL_HTTP_TOKEN: "{{ consul_acl_master_token }}"
+    when: 
+      - consul_node_role is not defined or consul_node_role != 'server' 
+      - inventory_hostname_short not in list_policies.stdout
+    command: >
+        consul acl policy create \
+        -description='Agent has host-related privileges.'
+        -name {{ inventory_hostname_short }} \
+        -rules @node-{{ inventory_hostname_short }}-policy.hcl
+    args:
+      chdir: "{{ consul_policies }}"
+    register: policy_out
+
+  - name: Update policies for nodes
+    delegate_to: "{{ groups.consul_servers[0] }}"
+    environment:
+      CONSUL_HTTP_TOKEN: "{{ consul_acl_master_token }}"
+    when:
+      - consul_node_role is not defined or consul_node_role != 'server' 
+      - inventory_hostname_short in list_policies.stdout
+    command: >
+      consul acl policy update \
+        -description='Agent has host-related privileges.'
+        -name {{ inventory_hostname_short }} \
+        -rules @node-{{ inventory_hostname_short }}-policy.hcl
+    args:
+      chdir: "{{ consul_policies }}"
+    register: policy_out
+  tags:
+    - policies
+
+- name: Ensure directory exists
+  delegate_to: "{{ groups.consul_servers[0] }}"
+  run_once: true
+  file:
+    state: directory
+    path: "{{ consul_requests }}"
+    owner: "{{ consul_user }}"
+    group: "{{ consul_group }}"
+    mode: 0700
+  tags:
+    - tokens
+  
+- name: Query token
+  delegate_to: "{{ groups.consul_servers[0] }}"
+  when: consul_node_role is not defined or consul_node_role != 'server'
+  environment:
+    CONSUL_HTTP_TOKEN: "{{ consul_acl_master_token }}"
+  shell: "consul acl token list | grep 'Agent token '| sed 's/.*Agent token //'"
+  changed_when: false
+  register: list_tokens
+  tags:
+    - policies
+
+- name: Generate token request for agent
+  delegate_to: "{{ groups.consul_servers[0] }}"
+  when: 
+      - consul_node_role is not defined or consul_node_role != 'server'
+      - inventory_hostname_short not in list_tokens.stdout
+  template:
+    src: token-request.json.j2
+    dest: "{{ consul_requests }}/{{ inventory_hostname_short }}.json"
+    owner: "{{ consul_user }}"
+    group: "{{ consul_group }}"
+    mode: 0600
+  tags:
+    - tokens 
+    - token_template
+
+- block: 
+  - name: Create token for agent
+    delegate_to: "{{ groups.consul_servers[0] }}"
+    when: 
+        - consul_node_role is not defined or consul_node_role != 'server'
+        - inventory_hostname_short not in list_tokens.stdout
+    command: >
+      curl -q --fail -X PUT --data @{{ inventory_hostname_short }}.json \
+      -H "X-Consul-Token: {{ consul_acl_master_token }}" \
+      http://127.0.0.1:8500/v1/acl/token
+    args:
+      chdir: "{{ consul_requests }}"
+      warn: false
+    register: token_request
+    tags:
+      - tokens
+      - token_request
+
+  - name: set agent token
+    when: 
+        - consul_node_role is not defined or consul_node_role != 'server'
+        - inventory_hostname_short not in list_tokens.stdout
+    set_fact:
+      this_agent_token: "{{ token_request.stdout |from_json|json_query('SecretID') }}"
+    no_log: true
+    tags:
+      - tokens
+      - token_request
+
+  - name: Process token
+    when: 
+        - consul_node_role is not defined or consul_node_role != 'server'
+        - inventory_hostname_short not in list_tokens.stdout
+    lineinfile:
+      path: "{{ consul_config_path }}/config.json"
+      regexp: '            "agent":'
+      line: '            "agent": "{{ this_agent_token }}"'
+    notify: restart consul
+    tags:
+      - tokens
+      - token_config
+
+#    stdout: '{"AccessorID":"8f056011-44a3-1068-0656-e78d5ec7b30b","SecretID":"87a66689-f928-5e3e-d67f-12ac25e771eb","Description":"Agent token mock-oqsoel13041","Policies":[{"ID":"e94ac56d-4401-aa66-e314-efe9c4099dac","Name":"mock-oqsoel13041"}],"Local":false,"CreateTime":"2019-09-20T17:18:31.273373583+02:00","Hash":"elUaKG4ZCmSnTco4cwLMtaOTH8Jo7mnxwDBcXjSDy2E=","CreateIndex":10062,"ModifyIndex":10062}'
+
+- name: Query token
+  delegate_to: "{{ groups.consul_servers[0] }}"
+  run_once: true
+  environment:
+    CONSUL_HTTP_TOKEN: "{{ consul_acl_master_token }}"
+  shell: "consul acl token list | grep -c 'Deployment service registration token'"
+  changed_when: false
+  register: deployer_token
+  failed_when: deployer_token.stdout == ''
+  tags:
+    - policies
+    - deployer
+    - tokens
+
+- name: Copy deployer policy
+  when: deployer_token.stdout|int == 0
+  delegate_to: "{{ groups.consul_servers[0] }}"
+  run_once: true
+  copy:
+    src: deployer-policy.hcl
+    dest: "{{ consul_policies }}/"
+    owner: "{{ consul_user }}"
+    group: "{{ consul_group }}"
+    mode: 0640
+  tags:
+    - policies
+    - deployer
+  
+- name: Create policy for deployer
+  when: deployer_token.stdout|int == 0
+  delegate_to: "{{ groups.consul_servers[0] }}"
+  run_once: true
+  environment:
+    CONSUL_HTTP_TOKEN: "{{ consul_acl_master_token }}"
+  command: >
+    consul acl policy create \
+      -description='Deployer has service register.'
+      -name 'deployer-policy'
+      -rules @deployer-policy.hcl
+  args:
+    chdir: "{{ consul_policies }}"
+  tags:
+    - policies
+    - deployer
+
+- name: Copy deployer token request
+  when: deployer_token.stdout|int == 0
+  delegate_to: "{{ groups.consul_servers[0] }}"
+  run_once: true
+  copy:
+    src: deployer-token.json
+    dest: "{{ consul_requests }}"
+    owner: "{{ consul_user }}"
+    group: "{{ consul_group }}"
+    mode: 0640
+  tags:
+    - tokens
+    - deployer
+
+- name: Create token for agent
+  when: deployer_token.stdout|int == 0
+  delegate_to: "{{ groups.consul_servers[0] }}"
+  run_once: true
+  shell: >
+    curl -q --fail -X PUT --data @deployer-token.json \
+    -H "X-Consul-Token: {{ consul_acl_master_token }}" \
+    http://127.0.0.1:8500/v1/acl/token
+  args:
+    chdir: "{{ consul_requests }}"
+    warn: false
+  register: token_request
+  tags:
+    - tokens
+    - token_request
+    - deployer

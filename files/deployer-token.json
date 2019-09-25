@@ -1,0 +1,9 @@
+{
+   "Description": "Deployment service registration token",
+   "Local": false,
+   "Policies": [
+      {
+         "Name": "deployer-policy"
+      }
+   ]
+}

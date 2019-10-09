@@ -8,7 +8,7 @@
       no_log: true
       run_once: true
       changed_when: false
-    
+
     - name: Save acl_master_token from existing configuration
       delegate_to: "{{ groups.consul_servers[0] }}"
       run_once: true
@@ -20,6 +20,7 @@
   tags:
     - policies
     - tokens
+    - agent_token
     - deployer
 
 - name: Determine fully qualified name for https
@@ -53,7 +54,7 @@
     mode: 0640
   tags:
     - policies
- 
+
 - name: Query policies
   delegate_to: "{{ groups.consul_servers[0] }}"
   when: consul_node_role is not defined or consul_node_role != 'server'
@@ -65,13 +66,13 @@
   tags:
     - policies
 
-- block: 
+- block:
   - name: Initialize policies for nodes
     delegate_to: "{{ groups.consul_servers[0] }}"
     environment:
       CONSUL_HTTP_TOKEN: "{{ consul_acl_master_token }}"
-    when: 
-      - consul_node_role is not defined or consul_node_role != 'server' 
+    when:
+      - consul_node_role is not defined or consul_node_role != 'server'
       - inventory_hostname_short not in list_policies.stdout
     command: >
         {{ consul_bin_path }}/consul acl policy create \
@@ -87,7 +88,7 @@
     environment:
       CONSUL_HTTP_TOKEN: "{{ consul_acl_master_token }}"
     when:
-      - consul_node_role is not defined or consul_node_role != 'server' 
+      - consul_node_role is not defined or consul_node_role != 'server'
       - inventory_hostname_short in list_policies.stdout
     command: >
       {{ consul_bin_path }}/consul acl policy update \
@@ -111,8 +112,8 @@
     mode: 0700
   tags:
     - tokens
-  
-- name: Query token
+
+- name: Query Agent tokens
   delegate_to: "{{ groups.consul_servers[0] }}"
   when: consul_node_role is not defined or consul_node_role != 'server'
   environment:
@@ -125,7 +126,7 @@
 
 - name: Generate token request for agent
   delegate_to: "{{ groups.consul_servers[0] }}"
-  when: 
+  when:
       - consul_node_role is not defined or consul_node_role != 'server'
       - inventory_hostname_short not in list_tokens.stdout
   template:
@@ -135,13 +136,13 @@
     group: "{{ consul_group }}"
     mode: 0600
   tags:
-    - tokens 
+    - tokens
     - token_template
 
-- block: 
+- block:
   - name: Create token for agent
     delegate_to: "{{ groups.consul_servers[0] }}"
-    when: 
+    when:
         - consul_node_role is not defined or consul_node_role != 'server'
         - inventory_hostname_short not in list_tokens.stdout
     command: >
@@ -156,29 +157,45 @@
       - tokens
       - token_request
 
-  - name: set agent token
-    when: 
+- block:
+  - name: Query Agent token
+    delegate_to: "{{ groups.consul_servers[0] }}"
+    when: consul_node_role is not defined or consul_node_role != 'server'
+    environment:
+      CONSUL_HTTP_TOKEN: "{{ consul_acl_master_token }}"
+    script: "agent-token.sh {{ inventory_hostname }}"
+    changed_when: false
+    register: agent_token
+    tags:
+      - policies
+      - tokens
+      - token_request
+      - agent_token
+
+  - name: Set this_agent_token fact
+    when:
         - consul_node_role is not defined or consul_node_role != 'server'
-        - inventory_hostname_short not in list_tokens.stdout
+        - inventory_hostname_short not in agent_token.stdout
     set_fact:
-      this_agent_token: "{{ token_request.stdout |from_json|json_query('SecretID') }}"
-    no_log: true
+      this_agent_token: "{{ agent_token.stdout_lines[0] }}"
+    no_log: false
     tags:
       - tokens
       - token_request
+      - agent_token
 
-  - name: Process token
-    when: 
+  - name: Process agent token
+    when:
         - consul_node_role is not defined or consul_node_role != 'server'
-        - inventory_hostname_short not in list_tokens.stdout
     lineinfile:
       path: "{{ consul_config_path }}/config.json"
-      regexp: '            "agent":'
-      line: '            "agent": "{{ this_agent_token }}"'
+      regexp: '"tokens": '
+      line: '      "tokens": {"agent": "{{ this_agent_token }}"}'
     notify: restart consul
     tags:
       - tokens
       - token_config
+      - agent_token
 
 #    stdout: '{"AccessorID":"8f056011-44a3-1068-0656-e78d5ec7b30b","SecretID":"87a66689-f928-5e3e-d67f-12ac25e771eb","Description":"Agent token mock-oqsoel13041","Policies":[{"ID":"e94ac56d-4401-aa66-e314-efe9c4099dac","Name":"mock-oqsoel13041"}],"Local":false,"CreateTime":"2019-09-20T17:18:31.273373583+02:00","Hash":"elUaKG4ZCmSnTco4cwLMtaOTH8Jo7mnxwDBcXjSDy2E=","CreateIndex":10062,"ModifyIndex":10062}'
 
@@ -209,7 +226,7 @@
   tags:
     - policies
     - deployer
-  
+
 - name: Create policy for deployer
   when: deployer_token.stdout|int == 0
   delegate_to: "{{ groups.consul_servers[0] }}"

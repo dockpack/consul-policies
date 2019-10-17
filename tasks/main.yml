@@ -163,7 +163,7 @@
     when: consul_node_role is not defined or consul_node_role != 'server'
     environment:
       CONSUL_HTTP_TOKEN: "{{ consul_acl_master_token }}"
-    script: "agent-token.sh {{ inventory_hostname }}"
+    script: "agent-token.sh {{ inventory_hostname_short }}"
     changed_when: false
     register: agent_token
     tags:

@@ -1,5 +1,32 @@
 ---
 
+- name: Enable access in firewalld
+  firewalld:
+    port: '{{ item }}/tcp'
+    permanent: true
+    state: enabled
+    immediate: true
+  with_items:
+    - 8300
+    - 8301
+    - 8302
+    - 8500
+    - 8501
+    - 8502
+    - 8600
+
+- name: Enable udp in firewalld
+  firewalld:
+    port: '{{ item }}/tcp'
+    permanent: true
+    state: enabled
+    immediate: true
+  with_items:
+    - 8301
+    - 8302
+    - 8502
+    - 8600
+
 - block:
     - name: Read ACL master token from previously boostrapped server
       delegate_to: "{{ groups.consul_servers[0] }}"

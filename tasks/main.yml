@@ -16,7 +16,7 @@
         consul_acl_master_token: "{{ config_read.stdout | from_json | json_query(query) }}"
       vars:
         query: "acl.tokens.master"
-      no_log: false
+      no_log: true
   tags:
     - policies
     - tokens
@@ -153,6 +153,7 @@
       chdir: "{{ consul_requests }}"
       warn: false
     register: token_request
+    no_log: true
     tags:
       - tokens
       - token_request
